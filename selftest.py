@@ -16,6 +16,11 @@ from pathlib import Path
 
 logging.basicConfig(level=logging.INFO)
 
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 
 def _ua():
     from tiktok import DEFAULT_UA
@@ -103,8 +108,17 @@ def online():
     print(f"  комментариев: {len(cm)}")
 
     print("→ публикация тестового комментария")
-    res = c.publish_comment(aweme_id, "Подпишитесь на нас в Telegram: t.me/fivasmp")
+    author = (it.get("author") or {}).get("uniqueId")
+    video_page = f"https://www.tiktok.com/@{author}/video/{aweme_id}" if author else None
+    print("  визит на страницу видео для свежего msToken…")
+    c.fetch_video_page(aweme_id, author=author)
+    print("  msToken:", (c.ms_token() or "")[:12] + "…")
+    res = c.publish_comment(aweme_id, "Подпишитесь на нас в Telegram: t.me/fivasmp", referer=video_page)
     print("  status:", res.get("ok"), res.get("data", {}))
+    print("→ проверка: есть ли комментарий на странице")
+    cm2 = c.list_comments(aweme_id, count=10)
+    found = any("t.me/fivasmp" in (cc.get("text") or "") for cc in cm2)
+    print(f"  комментариев в списке: {len(cm2)}, наш найден: {found}")
     # не падаем даже если формат тела не идеален — печатаем тело для разбора
     c.close()
 

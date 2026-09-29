@@ -31,7 +31,8 @@ HOME_RECOMMEND = f"{TIKTOK_DOMAIN}/api/recommend/item_list/"
 USER_DETAIL = f"{TIKTOK_DOMAIN}/api/user/detail/"
 USER_POST = f"{TIKTOK_DOMAIN}/api/post/item_list/"
 POST_COMMENT_LIST = f"{TIKTOK_DOMAIN}/api/comment/list/"
-COMMENT_PUBLISH = f"{TIKTOK_DOMAIN}/api/comment/v2/publish/"
+COMMENT_PUBLISH = f"{TIKTOK_DOMAIN}/api/comment/publish/"
+SEARCH_ITEM = f"{TIKTOK_DOMAIN}/api/search/item/full/"
 
 DEFAULT_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -219,12 +220,24 @@ class TikTokClient:
         return items
 
     def get_own_videos(self, sec_uid: str, count: int = 20) -> List[dict]:
-        """Свои видео юзера по sec_user_id (для режима «свои видео»)."""
+        """Видео пользователя (или любого автора) по sec_user_id."""
         pairs = self.base_params(secUid=sec_uid, count=count, coverFormat="2", cursor="0")
         url = self._signed_url(USER_POST, pairs)
         r = self._request("GET", url)
         data = self._json(r)
-        return data.get("awemeList") or data.get("itemList") or []
+        return data.get("awemeList") or data.get("itemList") or data.get("item_list") or []
+
+    def search_videos(self, keyword: str, count: int = 12) -> List[dict]:
+        """Поиск видео по слову/хэштегу (не зависит от IP-региона)."""
+        pairs = self.base_params(keyword=keyword, offset="0", count=count,
+                                 sort_type="0", publish_time="0")
+        url = self._signed_url(SEARCH_ITEM, pairs)
+        r = self._request("GET", url)
+        data = self._json(r)
+        items = data.get("item_list") or data.get("itemList") or []
+        if not items and isinstance(data.get("data"), list):
+            items = data["data"]
+        return [it for it in items if isinstance(it, dict)]
 
     def aweme_id(self, item: dict) -> Optional[str]:
         v = item.get("aweme_id") or item.get("id") or item.get("awemeId")
@@ -245,19 +258,30 @@ class TikTokClient:
         data = self._json(r)
         return data.get("comments") or []
 
-    def publish_comment(self, aweme_id: str, text: str) -> dict:
-        """Отправляет комментарий. Форма: aweme_id, text, text_extra (ради csrf)."""
+    def fetch_video_page(self, aweme_id: str, author: Optional[str] = None) -> None:
+        """Посещает страницу видео, чтобы TikTok выдал msToken, привязанный к этому URL."""
+        if author:
+            page = f"{TIKTOK_DOMAIN}/@{author}/video/{aweme_id}"
+        else:
+            page = f"{TIKTOK_DOMAIN}/video/{aweme_id}"
+        self._request("GET", page, allow_empty=True)
+
+    def publish_comment(self, aweme_id: str, text: str, referer: Optional[str] = None) -> dict:
+        """Отправляет комментарий. Параметры идут и в query (подписываемые), и в body."""
         body_map = {
             "aweme_id": aweme_id,
             "text": text,
             "text_extra": "[]",
+            "count": "20",
         }
         body_bytes = "&".join(f"{k}={quote(v, safe='')}" for k, v in body_map.items()).encode()
 
         pairs = self.base_params()
+        for k, v in body_map.items():
+            pairs.append((k, v))
         url = self._signed_url(COMMENT_PUBLISH, pairs, body_bytes=body_bytes)
 
-        headers = {}
+        headers = {"Referer": referer or f"https://www.tiktok.com/video/{aweme_id}/"}
         if self.csrf_token:
             headers["X-CSRF-Token"] = self.csrf_token
             headers["X-CSRFToken"] = self.csrf_token

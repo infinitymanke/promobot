@@ -1,26 +1,40 @@
 {
   "worker": {
     "modes": {
-      "feed": true,
-      "own": true
+      "feed": false,
+      "own": true,
+      "search": true,
+      "creators": false
     },
     "feed_count": 8,
-    "own_count": 10,
-    "max_comments_per_run": 20,
+    "own_count": 3,
+    "max_comments_per_run": 3,
     "comment_file": "comment.txt",
     "videos_file": "videos.txt",
     "delay_min_s": 20,
-    "delay_max_s": 90,
+    "delay_max_s": 60,
     "run_gap_s": 300,
     "idle_sleep_s": 1800,
     "region": "US",
     "language": "ru",
     "impersonate": "chrome131",
     "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "targets": {
+      "search_queries": [
+        "#майнкрафт",
+        "#приватныйсервер",
+        "#майнкрафтсервер",
+        "#майншилд",
+        "#ищусервер",
+        "#сервермайн"
+      ],
+      "search_count": 10,
+      "creator_sec_uids": []
+    },
     "schedule": {
       "enabled": true,
-      "start_hour": 10,
-      "end_hour": 22
+      "start_hour": 0,
+      "end_hour": 23
     }
   },
   "telegram": {

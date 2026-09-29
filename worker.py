@@ -59,16 +59,17 @@ class Worker:
 
     # ---------------------------------------------------------------- тексты комментариев
     def comment_texts(self) -> List[str]:
-        texts = []
+        """
+        Весь файл comment.txt — это ОДИН комментарий (многострочный).
+        Если файла нет — возвращает пустой список.
+        """
         path = self.cfg.get("comment_file", "comment.txt")
         try:
-            for line in Path(path).read_text(encoding="utf-8").splitlines():
-                line = line.strip()
-                if line and not line.startswith("#"):
-                    texts.append(line)
+            text = Path(path).read_text(encoding="utf-8").strip()
         except FileNotFoundError:
             logger.error("нет файла комментариев: %s", path)
-        return texts
+            return []
+        return [text] if text else []
 
     def own_video_ids(self) -> List[str]:
         """Свои видео: из videos.txt вытаскиваем id ссылок."""
@@ -84,7 +85,6 @@ class Worker:
             logger.error("нет файла своих видео: %s", path)
         return ids
 
-    # ---------------------------------------------------------------- расписание
     def in_window(self) -> bool:
         """True, если сейчас в активном окне расписания."""
         sched = self.cfg.get("schedule", {})
@@ -108,6 +108,34 @@ class Worker:
         delay = (target - now).total_seconds()
         logger.info("вне рабочего окна — сплю до %s", target.time())
         time.sleep(min(delay, 3600))
+
+    # ---------------------------------------------------------------- подбор целей (поиск/авторы)
+    def _search_candidates(self) -> List[tuple]:
+        """Видео из поиска по словам/хэштегам ниши (rotate по запросам между запусками)."""
+        queries = self.cfg.get("targets", {}).get("search_queries", [])
+        if not queries:
+            return []
+        idx = self.state.setdefault("search_idx", 0) % len(queries)
+        query = queries[idx]
+        self.state["search_idx"] = idx + 1
+        count = self.cfg.get("targets", {}).get("search_count", 10)
+        try:
+            items = self.client.search_videos(query, count=count)
+        except TikTokError as exc:
+            logger.warning("поиск «%s»: %s", query, exc)
+            return []
+        return [(it, "поиск:" + query) for it in items]
+
+    def _creator_candidates(self) -> List[tuple]:
+        """Новые видео выбранных авторов (secUid — не зависят от IP)."""
+        uids = self.cfg.get("targets", {}).get("creator_sec_uids", [])
+        items = []
+        for uid in uids:
+            try:
+                items += [(it, "автор:" + uid[-8:]) for it in self.client.get_own_videos(uid, count=6)]
+            except TikTokError as exc:
+                logger.warning("автор %s: %s", uid, exc)
+        return items
 
     # ---------------------------------------------------------------- прогон
     def run_once(self) -> dict:
@@ -164,6 +192,28 @@ class Worker:
                     logger.warning("своё видео %s: %s", aweme_id, exc)
                     stats["failed"] += 1
                 self._sleep(delay_min, delay_max)
+
+        # --- поиск по хэштегам (тематический подбор — не зависит от региона ленты)
+        if modes.get("search", True) and stats["posted"] < max_comments:
+            found = self._search_candidates()
+            stats["search_scanned"] = len(found)
+            if found:
+                stats = self._comment_items(
+                    [it for it, _ in found], texts, stats,
+                    max_comments, delay_min, delay_max,
+                    note=found[0][1],
+                )
+
+        # --- авторы (новые видео выбранных блогеров)
+        if modes.get("creators", False) and stats["posted"] < max_comments:
+            found = self._creator_candidates()
+            stats["creators_scanned"] = len(found)
+            if found:
+                stats = self._comment_items(
+                    [it for it, _ in found], texts, stats,
+                    max_comments, delay_min, delay_max,
+                    note="авторы",
+                )
 
         self._save_state()
         return stats

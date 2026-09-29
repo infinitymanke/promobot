@@ -10,3 +10,6 @@ accounts.json
 .env
 webdriver/
 test_data/
+.edge_data/
+otp.txt
+_*
