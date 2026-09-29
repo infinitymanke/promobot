@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+sessions/
+cookies_b64.txt
+state.json
+logs/
+api.txt
+accounts.json
+*.log
+.env
+webdriver/
+test_data/

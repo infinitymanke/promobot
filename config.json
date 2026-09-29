@@ -1,0 +1,30 @@
+{
+  "worker": {
+    "modes": {
+      "feed": true,
+      "own": true
+    },
+    "feed_count": 8,
+    "own_count": 10,
+    "max_comments_per_run": 20,
+    "comment_file": "comment.txt",
+    "videos_file": "videos.txt",
+    "delay_min_s": 20,
+    "delay_max_s": 90,
+    "run_gap_s": 300,
+    "idle_sleep_s": 1800,
+    "region": "US",
+    "language": "ru",
+    "impersonate": "chrome131",
+    "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "schedule": {
+      "enabled": true,
+      "start_hour": 10,
+      "end_hour": 22
+    }
+  },
+  "telegram": {
+    "stats_interval_s": 3600,
+    "critical_threshold": 5
+  }
+}
