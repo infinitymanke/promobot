@@ -101,6 +101,15 @@ def main() -> int:
     sent = bot.send_message(line)
     if not sent and (TELEGRAM_TOKEN and TELEGRAM_CHAT_ID):
         print("!! не удалось отправить уведомление в Telegram")
+
+    try:
+        bot.set_commands()
+        handled = bot.answer_updates(line, worker.state)
+        worker._save_state()
+        if handled:
+            print("telegram:", handled)
+    except Exception as exc:
+        print("!! telegram команды:", exc)
     return 0 if stats.get("failed") == 0 else 0
 
 

@@ -110,8 +110,23 @@ class Worker:
         time.sleep(min(delay, 3600))
 
     # ---------------------------------------------------------------- подбор целей (поиск/авторы)
+    def _age_days(self, item: dict):
+        """Возраст видео в днях по createTime/create_time (сек или мс), None если нет даты."""
+        ts = item.get("createTime") or item.get("create_time")
+        if not ts:
+            return None
+        try:
+            ts = float(ts)
+        except (TypeError, ValueError):
+            return None
+        if ts > 1e12:
+            ts /= 1000
+        return (time.time() - ts) / 86400
+
     def _search_candidates(self) -> List[tuple]:
-        """Видео из поиска по словам/хэштегам ниши (rotate по запросам между запусками)."""
+        """Поиск по хэштегам ниши → собираем активных авторов → их НОВЫЕ видео.
+        Глобальный поиск TikTok отдаёт старые видео (2021-2022), поэтому кандидаты
+        собираются из свежих постов найденных авторов (не зависят от IP)."""
         queries = self.cfg.get("targets", {}).get("search_queries", [])
         if not queries:
             return []
@@ -119,12 +134,41 @@ class Worker:
         query = queries[idx]
         self.state["search_idx"] = idx + 1
         count = self.cfg.get("targets", {}).get("search_count", 10)
+        max_age = self.cfg.get("max_age_days", 60)
         try:
-            items = self.client.search_videos(query, count=count)
+            items = self.client.search_videos(query, count=count, sort_type="0")
         except TikTokError as exc:
             logger.warning("поиск «%s»: %s", query, exc)
-            return []
-        return [(it, "поиск:" + query) for it in items]
+            items = []
+
+        authors = []
+        try:
+            users = self.client.search_users(query, count=10)
+            authors = [u.get("sec_uid") for u in users if u.get("sec_uid")]
+        except TikTokError as exc:
+            logger.warning("поиск пользователей «%s»: %s", query, exc)
+        if not authors:
+            seen = set()
+            for it in items:
+                sec = self.client.author_uid(it)
+                if sec and sec not in seen:
+                    seen.add(sec)
+                    authors.append(sec)
+
+        limit = self.cfg.get("creators_max_authors", 6)
+        candidates = []
+        for sec in authors[:limit]:
+            try:
+                posts = self.client.get_own_videos(sec, count=12)
+            except TikTokError as exc:
+                logger.warning("автор %s: %s", sec[-8:], exc)
+                continue
+            for post in posts:
+                age = self._age_days(post)
+                if age is not None and age <= max_age:
+                    candidates.append((post, "автор:" + sec[-8:]))
+        logger.info("поиск «%s»: авторов %d, свежих видео %d", query, len(authors), len(candidates))
+        return candidates
 
     def _creator_candidates(self) -> List[tuple]:
         """Новые видео выбранных авторов (secUid — не зависят от IP)."""
@@ -219,6 +263,7 @@ class Worker:
         return stats
 
     def _comment_items(self, items, texts, stats, max_comments, delay_min, delay_max, note):
+        max_age = self.cfg.get("max_age_days", 60)
         for item in items:
             if stats["posted"] >= max_comments:
                 break
@@ -226,6 +271,11 @@ class Worker:
             if not aweme_id:
                 continue
             if self._is_commented(aweme_id):
+                continue
+            age = self._age_days(item)
+            if age is not None and age > max_age:
+                stats["skipped_old"] = stats.get("skipped_old", 0) + 1
+                logger.info("[%s] %s: пропуск (видео %d дн.)", note, aweme_id, int(age))
                 continue
             text = random.choice(texts)
             try:

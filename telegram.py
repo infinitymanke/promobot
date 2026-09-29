@@ -15,6 +15,22 @@ logger = logging.getLogger("promobot.telegram")
 
 API_BASE = "https://api.telegram.org"
 
+COMMANDS = [
+    ("start", "Запустить / статус бота"),
+    ("stats", "Статистика работы"),
+    ("help", "Справка и команды"),
+]
+
+HELP_TEXT = (
+    "🤖 PromoBot — твой автокомментатор TikTok\n\n"
+    "Команды:\n"
+    "/start — статус и работа бота\n"
+    "/stats — отчёт по последнему циклу\n"
+    "/help — эта справка\n\n"
+    "Бот запускается каждый час (GitHub Actions) и сам постит комментарии "
+    "под новые майнкрафт-видео с твоего аккаунта."
+)
+
 
 class TelegramBot:
     def __init__(self, token: str, chat_id: Optional[str] = None, timeout: float = 15.0):
@@ -45,6 +61,55 @@ class TelegramBot:
         payload = {"chat_id": self.chat_id, "text": text, "disable_web_page_preview": True}
         result = self._post("sendMessage", payload)
         return bool(result)
+
+    def set_commands(self) -> bool:
+        """Регистрирует меню команд (видно при вводе '/')."""
+        if not self.token:
+            return False
+        payload = {"commands": [{"command": c, "description": d} for c, d in COMMANDS]}
+        return bool(self._post("setMyCommands", payload))
+
+    def answer_updates(self, report: str, state: dict) -> Optional[str]:
+        """
+        Забирает накопленные команды (раз в час) и отвечает на них.
+        Обработанный update_id сохраняется в state (переживает запуски Actions).
+        """
+        if not self.token or not self.chat_id:
+            return None
+        offset = int(state.get("tg_update_offset", 0) or 0)
+        try:
+            r = self._session.get(
+                f"{API_BASE}/bot{self.token}/getUpdates",
+                params={"timeout": 1, "limit": 10, "offset": offset + 1},
+                timeout=self.timeout,
+            )
+            r.raise_for_status()
+            data = r.json()
+        except Exception as exc:
+            logger.warning("getUpdates error: %s", exc)
+            return None
+        if not data.get("ok"):
+            logger.warning("getUpdates: %s", data.get("description"))
+            return None
+
+        answered = 0
+        for upd in data.get("result", []):
+            uid = int(upd.get("update_id", 0))
+            state["tg_update_offset"] = max(int(state.get("tg_update_offset", 0) or 0), uid)
+            msg = upd.get("message") or {}
+            chat = msg.get("chat") or {}
+            if str(chat.get("id")) != str(self.chat_id):
+                continue
+            cmd = ((msg.get("text") or "").strip().split(" ")[0].split("@")[0]).lower()
+            if cmd in ("/start", "/help"):
+                reply = HELP_TEXT
+            elif cmd == "/stats":
+                reply = report or "Статистики пока нет."
+            else:
+                continue
+            self.send_message(reply)
+            answered += 1
+        return f"обработано команд: {answered}" if answered else None
 
     def try_resolve_chat_id(self) -> Optional[str]:
         """

@@ -31,6 +31,8 @@
       "search_count": 10,
       "creator_sec_uids": []
     },
+    "max_age_days": 60,
+    "creators_max_authors": 6,
     "schedule": {
       "enabled": true,
       "start_hour": 0,

@@ -33,6 +33,7 @@ USER_POST = f"{TIKTOK_DOMAIN}/api/post/item_list/"
 POST_COMMENT_LIST = f"{TIKTOK_DOMAIN}/api/comment/list/"
 COMMENT_PUBLISH = f"{TIKTOK_DOMAIN}/api/comment/publish/"
 SEARCH_ITEM = f"{TIKTOK_DOMAIN}/api/search/item/full/"
+SEARCH_USER = f"{TIKTOK_DOMAIN}/api/search/user/full/"
 
 DEFAULT_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -227,10 +228,11 @@ class TikTokClient:
         data = self._json(r)
         return data.get("awemeList") or data.get("itemList") or data.get("item_list") or []
 
-    def search_videos(self, keyword: str, count: int = 12) -> List[dict]:
-        """Поиск видео по слову/хэштегу (не зависит от IP-региона)."""
+    def search_videos(self, keyword: str, count: int = 12, sort_type: str = "0") -> List[dict]:
+        """Поиск видео по слову/хэштегу (не зависит от IP-региона).
+        sort_type: "0" — топ по релевантности, "1" — новые, "2" — просмотры."""
         pairs = self.base_params(keyword=keyword, offset="0", count=count,
-                                 sort_type="0", publish_time="0")
+                                 sort_type=sort_type, publish_time="0")
         url = self._signed_url(SEARCH_ITEM, pairs)
         r = self._request("GET", url)
         data = self._json(r)
@@ -238,6 +240,20 @@ class TikTokClient:
         if not items and isinstance(data.get("data"), list):
             items = data["data"]
         return [it for it in items if isinstance(it, dict)]
+
+    def search_users(self, keyword: str, count: int = 12) -> List[dict]:
+        """Поиск аккаунтов по ключевому слову. Возвращает user_info (sec_uid, unique_id, nickname)."""
+        pairs = self.base_params(keyword=keyword, offset="0", count=count,
+                                 sort_type="0", publish_time="0")
+        url = self._signed_url(SEARCH_USER, pairs)
+        r = self._request("GET", url)
+        data = self._json(r)
+        users = []
+        for it in data.get("user_list") or []:
+            ui = it.get("user_info") if isinstance(it, dict) else None
+            if isinstance(ui, dict) and ui.get("sec_uid"):
+                users.append(ui)
+        return users
 
     def aweme_id(self, item: dict) -> Optional[str]:
         v = item.get("aweme_id") or item.get("id") or item.get("awemeId")
