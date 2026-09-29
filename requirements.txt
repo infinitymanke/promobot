@@ -1,2 +1,2 @@
 curl_cffi>=0.7
-xgnarly>=1.0
+requests>=2.31
