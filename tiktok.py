@@ -266,30 +266,61 @@ class TikTokClient:
             page = f"{TIKTOK_DOMAIN}/video/{aweme_id}"
         self._request("GET", page, allow_empty=True)
 
-    def publish_comment(self, aweme_id: str, text: str, referer: Optional[str] = None) -> dict:
-        """Отправляет комментарий. Параметры идут и в query (подписываемые), и в body."""
-        body_map = {
-            "aweme_id": aweme_id,
-            "text": text,
-            "text_extra": "[]",
-            "count": "20",
+    def _fetch_publish_csrf(self, referer: str) -> str:
+        """SecSDK: HEAD на эндпоинт публикации отдаёт x-ware-csrf-token (формат 0,<hex>,...)."""
+        headers = {
+            "x-secsdk-csrf-request": "1",
+            "x-secsdk-csrf-version": "1.2.22",
+            "Referer": referer,
         }
-        body_bytes = "&".join(f"{k}={quote(v, safe='')}" for k, v in body_map.items()).encode()
+        r = self.session.head(COMMENT_PUBLISH, headers=headers, timeout=self.timeout)
+        self._merge_set_cookie(r)
+        ware = (r.headers.get("x-ware-csrf-token") or "").strip()
+        parts = ware.split(",")
+        return parts[1].strip() if len(parts) > 1 else ""
+
+    def publish_comment(self, aweme_id: str, text: str, referer: Optional[str] = None) -> dict:
+        """Публикует комментарий. Флоу приложения: HEAD для SecSDK-csrf, затем POST
+        со ВСЕМИ параметрами в query (тело пустое) и заголовком x-secsdk-csrf-token."""
+        referer = referer or f"{TIKTOK_DOMAIN}/video/{aweme_id}/"
+        token = self._fetch_publish_csrf(referer)
+        if not token:
+            return {"ok": False, "data": {"status_msg": "нет SecSDK-csrf токена"}}
 
         pairs = self.base_params()
-        for k, v in body_map.items():
+        for k, v in {
+            "WebIdLastTime": "1790715707",
+            "data_collection_enabled": "true",
+            "aweme_id": aweme_id,
+            "from_page": "video",
+            "history_len": "2",
+            "odinId": self.cookies.get("uid_tt", ""),
+            "referer": "",
+            "root_referer": "",
+            "text": text,
+            "text_extra": "[]",
+            "user_is_login": "true",
+        }.items():
             pairs.append((k, v))
-        url = self._signed_url(COMMENT_PUBLISH, pairs, body_bytes=body_bytes)
 
-        headers = {"Referer": referer or f"https://www.tiktok.com/video/{aweme_id}/"}
+        url = self._signed_url(COMMENT_PUBLISH, pairs, body_bytes=b"")
+        headers = {
+            "Referer": referer,
+            "x-secsdk-csrf-token": token,
+            "Origin": f"{TIKTOK_DOMAIN}",
+            "Sec-Fetch-Site": "same-origin",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Dest": "empty",
+        }
         if self.csrf_token:
             headers["X-CSRF-Token"] = self.csrf_token
-            headers["X-CSRFToken"] = self.csrf_token
-            headers["x-csrf-token"] = self.csrf_token
 
-        r = self._request("POST", url, body_bytes=body_bytes, headers=headers)
+        r = self._request("POST", url, body_bytes=b"", headers=headers)
         data = self._json(r)
-        if data.get("status_code") not in (0, None):
+        if isinstance(data, dict) and data.get("comment"):
+            comment = data["comment"]
+            return {"ok": True, "data": data, "cid": comment.get("cid")}
+        if isinstance(data, dict) and data.get("status_code") not in (0, None):
             return {"ok": False, "data": data}
         return {"ok": True, "data": data}
 
