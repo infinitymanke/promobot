@@ -31,6 +31,17 @@ class Worker:
         self.state = self._load_state()
         self.done_paths = set(self.state.get("commented", []))
 
+    # ---------------------------------------------------------------- обучение пула авторов
+    def _learn_author(self, sec: str) -> None:
+        """Запоминаем автора, на свежее видео которого успешно оставлен комментарий."""
+        if not sec:
+            return
+        pool = self.state.setdefault("trusted", [])
+        if sec not in pool:
+            pool.append(sec)
+            self.state["trusted"] = pool[-150:]
+            self._save_state()
+
     # ---------------------------------------------------------------- состояние
     def _load_state(self) -> dict:
         try:
@@ -124,9 +135,9 @@ class Worker:
         return (time.time() - ts) / 86400
 
     def _search_candidates(self) -> List[tuple]:
-        """Поиск по хэштегам ниши → собираем активных авторов → их НОВЫЕ видео.
-        Глобальный поиск TikTok отдаёт старые видео (2021-2022), поэтому кандидаты
-        собираются из свежих постов найденных авторов (не зависят от IP)."""
+        """Поиск по хэштегам ниши → активные авторы → их НОВЫЕ видео + прямой поиск.
+        Авторы, на видео которых успешно оставлен комментарий, попадают в state["trusted"]
+        и в следующих циклах дёргаются напрямую (см. `creators`)."""
         queries = self.cfg.get("targets", {}).get("search_queries", [])
         if not queries:
             return []
@@ -135,11 +146,12 @@ class Worker:
         self.state["search_idx"] = idx + 1
         count = self.cfg.get("targets", {}).get("search_count", 10)
         max_age = self.cfg.get("max_age_days", 60)
+
+        items = []
         try:
             items = self.client.search_videos(query, count=count, sort_type="0")
         except TikTokError as exc:
             logger.warning("поиск «%s»: %s", query, exc)
-            items = []
 
         authors = []
         try:
@@ -155,8 +167,14 @@ class Worker:
                     seen.add(sec)
                     authors.append(sec)
 
-        limit = self.cfg.get("creators_max_authors", 6)
+        # прямой поиск: свежие видео сразу (fallback, если авторы-пул пуст/устарел)
         candidates = []
+        for it in items:
+            age = self._age_days(it)
+            if age is not None and age <= max_age:
+                candidates.append((it, self.client.author_uid(it)))
+
+        limit = self.cfg.get("creators_max_authors", 6)
         for sec in authors[:limit]:
             try:
                 posts = self.client.get_own_videos(sec, count=12)
@@ -166,19 +184,31 @@ class Worker:
             for post in posts:
                 age = self._age_days(post)
                 if age is not None and age <= max_age:
-                    candidates.append((post, "автор:" + sec[-8:]))
+                    candidates.append((post, sec))
         logger.info("поиск «%s»: авторов %d, свежих видео %d", query, len(authors), len(candidates))
         return candidates
 
     def _creator_candidates(self) -> List[tuple]:
-        """Новые видео выбранных авторов (secUid — не зависят от IP)."""
-        uids = self.cfg.get("targets", {}).get("creator_sec_uids", [])
+        """Свежие видео из пула доверенных авторов (state["trusted"]) + список в конфиге."""
+        pool = list(self.state.get("trusted", []))
+        pool += [u for u in self.cfg.get("targets", {}).get("creator_sec_uids", [])]
+        seen = set()
+        uids = []
+        for u in pool:
+            if u and u not in seen:
+                seen.add(u)
+                uids.append(u)
         items = []
-        for uid in uids:
+        for uid in uids[: self.cfg.get("creators_max_authors", 6)]:
             try:
-                items += [(it, "автор:" + uid[-8:]) for it in self.client.get_own_videos(uid, count=6)]
+                posts = self.client.get_own_videos(uid, count=6)
             except TikTokError as exc:
-                logger.warning("автор %s: %s", uid, exc)
+                logger.warning("автор %s: %s", uid[-8:], exc)
+                continue
+            for post in posts:
+                age = self._age_days(post)
+                if age is not None and age <= self.cfg.get("max_age_days", 60):
+                    items.append((post, uid))
         return items
 
     # ---------------------------------------------------------------- прогон
@@ -205,7 +235,8 @@ class Worker:
                 logger.info("лента: %d видео", len(items))
                 stats["feed_scanned"] = len(items)
                 stats = self._comment_items(
-                    items, texts, stats, max_comments, delay_min, delay_max, note="лента"
+                    [(it, None) for it in items], texts, stats,
+                    max_comments, delay_min, delay_max, note="лента",
                 )
             except (TikTokAuthError, TikTokEmptyError) as exc:
                 logger.error("лента недоступна: %s", exc)
@@ -243,18 +274,18 @@ class Worker:
             stats["search_scanned"] = len(found)
             if found:
                 stats = self._comment_items(
-                    [it for it, _ in found], texts, stats,
+                    found, texts, stats,
                     max_comments, delay_min, delay_max,
-                    note=found[0][1],
+                    note="поиск",
                 )
 
-        # --- авторы (новые видео выбранных блогеров)
-        if modes.get("creators", False) and stats["posted"] < max_comments:
+        # --- авторы (доверенный пул: state["trusted"] + конфиг)
+        if modes.get("creators", True) and stats["posted"] < max_comments:
             found = self._creator_candidates()
             stats["creators_scanned"] = len(found)
             if found:
                 stats = self._comment_items(
-                    [it for it, _ in found], texts, stats,
+                    found, texts, stats,
                     max_comments, delay_min, delay_max,
                     note="авторы",
                 )
@@ -262,9 +293,9 @@ class Worker:
         self._save_state()
         return stats
 
-    def _comment_items(self, items, texts, stats, max_comments, delay_min, delay_max, note):
+    def _comment_items(self, pairs, texts, stats, max_comments, delay_min, delay_max, note):
         max_age = self.cfg.get("max_age_days", 60)
-        for item in items:
+        for item, sec in pairs:
             if stats["posted"] >= max_comments:
                 break
             aweme_id = self.client.aweme_id(item)
@@ -281,6 +312,8 @@ class Worker:
             try:
                 self.client.publish_comment(aweme_id, text)
                 self._mark_commented(aweme_id)
+                if sec:
+                    self._learn_author(sec)
                 stats["posted"] += 1
                 logger.info("[%s] %s: комментарий ок", note, aweme_id)
             except (TikTokAuthError, TikTokEmptyError) as exc:

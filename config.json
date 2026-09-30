@@ -4,7 +4,7 @@
       "feed": false,
       "own": true,
       "search": true,
-      "creators": false
+      "creators": true
     },
     "feed_count": 8,
     "own_count": 3,
