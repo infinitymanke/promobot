@@ -135,70 +135,81 @@ class Worker:
         return (time.time() - ts) / 86400
 
     def _search_candidates(self) -> List[tuple]:
-        """Поиск по хэштегам ниши → активные авторы → их НОВЫЕ видео + прямой поиск.
-        Авторы, на видео которых успешно оставлен комментарий, попадают в state["trusted"]
-        и в следующих циклах дёргаются напрямую (см. `creators`)."""
-        queries = self.cfg.get("targets", {}).get("search_queries", [])
-        if not queries:
-            return []
-        idx = self.state.setdefault("search_idx", 0) % len(queries)
-        query = queries[idx]
-        self.state["search_idx"] = idx + 1
-        count = self.cfg.get("targets", {}).get("search_count", 10)
-        max_age = self.cfg.get("max_age_days", 60)
+        """Полный обход всех запросов ниши за цикл → активные авторы → их НОВЫЕ видео.
+        Авторы, у которых есть свежие посты или на видео пользователи оставили комментарий,
+        попадают в state["trusted"] и в следующих циклах дёргаются напрямую."""
 
-        items = []
-        for sort_type in ("0", "1", "2"):
-            try:
-                items = self.client.search_videos(query, count=count, sort_type=sort_type)
-                fresh_direct = sum(
-                    1 for it in items
-                    if self._age_days(it) is not None and self._age_days(it) <= max_age
-                )
-                if fresh_direct:
+        def _fetch(query: str) -> List[tuple]:
+            count = self.cfg.get("targets", {}).get("search_count", 10)
+            max_age = self.cfg.get("max_age_days", 60)
+            items = []
+            for sort_type in ("0", "1", "2"):
+                try:
+                    items = self.client.search_videos(query, count=count, sort_type=sort_type)
+                    fresh_direct = sum(
+                        1 for it in items
+                        if self._age_days(it) is not None and self._age_days(it) <= max_age
+                    )
+                    if fresh_direct:
+                        break
+                except TikTokError as exc:
+                    logger.warning("поиск «%s» (%s): %s", query, sort_type, exc)
+                if items:
                     break
-            except TikTokError as exc:
-                logger.warning("поиск «%s» (%s): %s", query, sort_type, exc)
-            if items:
-                break
 
-        authors = []
-        try:
-            users = self.client.search_users(query, count=10)
-            authors = [u.get("sec_uid") for u in users if u.get("sec_uid")]
-        except TikTokError as exc:
-            logger.warning("поиск пользователей «%s»: %s", query, exc)
-        if not authors:
-            seen = set()
-            for it in items:
-                sec = self.client.author_uid(it)
-                if sec and sec not in seen:
-                    seen.add(sec)
-                    authors.append(sec)
-
-        # прямой поиск: свежие видео сразу (fallback, если авторы-пул пуст/устарел)
-        candidates = []
-        for it in items:
-            age = self._age_days(it)
-            if age is not None and age <= max_age:
-                candidates.append((it, self.client.author_uid(it)))
-
-        limit = self.cfg.get("creators_max_authors", 6)
-        for sec in authors[:limit]:
+            authors = []
             try:
-                posts = self.client.get_own_videos(sec, count=12)
+                users = self.client.search_users(query, count=10)
+                authors = [u.get("sec_uid") for u in users if u.get("sec_uid")]
             except TikTokError as exc:
-                logger.warning("автор %s: %s", sec[-8:], exc)
-                continue
-            had_fresh = False
-            for post in posts:
-                age = self._age_days(post)
+                logger.warning("поиск пользователей «%s»: %s", query, exc)
+            if not authors:
+                seen = set()
+                for it in items:
+                    sec = self.client.author_uid(it)
+                    if sec and sec not in seen:
+                        seen.add(sec)
+                        authors.append(sec)
+
+            out = []
+            for it in items:
+                age = self._age_days(it)
                 if age is not None and age <= max_age:
-                    candidates.append((post, sec))
-                    had_fresh = True
-            if had_fresh:
-                self._learn_author(sec)
-        logger.info("поиск «%s»: авторов %d, свежих видео %d", query, len(authors), len(candidates))
+                    out.append((it, self.client.author_uid(it)))
+
+            limit = self.cfg.get("creators_max_authors", 6)
+            for sec in authors[:limit]:
+                try:
+                    posts = self.client.get_own_videos(sec, count=12)
+                except TikTokError as exc:
+                    logger.warning("автор %s: %s", sec[-8:], exc)
+                    continue
+                had_fresh = False
+                for post in posts:
+                    age = self._age_days(post)
+                    if age is not None and age <= max_age:
+                        out.append((post, sec))
+                        had_fresh = True
+                if had_fresh:
+                    self._learn_author(sec)
+            logger.info("поиск «%s»: авторов %d, свежих видео %d", query, len(authors), len(out))
+            return out
+
+        queries = self.cfg.get("targets", {}).get("search_queries", [])
+        candidates = []
+        for query in queries:
+            if queries and len(candidates) >= self.cfg.get("max_comments_per_run", 3) * 4:
+                break
+            try:
+                candidates += _fetch(query)
+            except Exception as exc:
+                logger.warning("запрос «%s»: %s", query, exc)
+
+        def _key(pair):
+            item, _ = pair
+            age = self._age_days(item)
+            return age if age is not None else 1e9
+        candidates.sort(key=_key)
         return candidates
 
     def _creator_candidates(self) -> List[tuple]:
