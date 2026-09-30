@@ -47,8 +47,8 @@ def get_cookie_file() -> Path:
 
 
 def collect_targets() -> tuple:
-    """(video_ids, author_handles) — для лайков и подписок."""
-    ids = []
+    """(video_targets, author_handles) — [(handle|'', aid)], для лайков и подписок."""
+    vids = []
     handles = set()
     try:
         from tiktok import TikTokClient
@@ -58,10 +58,9 @@ def collect_targets() -> tuple:
             try:
                 for it in c.search_videos(q, count=8)[:8]:
                     aid = c.aweme_id(it)
-                    if aid and aid not in ids:
-                        ids.append(aid)
-                    au = it.get("author") or {}
-                    h = au.get("uniqueId")
+                    h = ((it.get("author") or {}).get("uniqueId")) or ""
+                    if aid and (h, aid) not in vids:
+                        vids.append((h, aid))
                     if h:
                         handles.add(h)
             except Exception:
@@ -73,7 +72,7 @@ def collect_targets() -> tuple:
         c.close()
     except Exception as exc:
         print("!! сбор целей:", exc)
-    return ids[:MAX_LIKES], list(handles)[:MAX_FOLLOWS]
+    return vids[:MAX_LIKES], list(handles)[:MAX_FOLLOWS]
 
 
 def main() -> int:
@@ -81,8 +80,8 @@ def main() -> int:
     if not cookies.get("cookies"):
         print("!! нет кук")
         return 1
-    video_ids, follow_handles = collect_targets()
-    print("цели: лайков видео =", len(video_ids), "| подписок =", len(follow_handles))
+    video_targets, follow_handles = collect_targets()
+    print("цели: лайков видео =", len(video_targets), "| подписок =", len(follow_handles))
 
     liked = followed = already = failed = 0
     detail = []
@@ -103,27 +102,29 @@ def main() -> int:
 
         def click_like():
             try:
-                like = pg.query_selector('[data-e2e="like-icon"], [data-e2e="like-button"]')
+                like = pg.query_selector(
+                    '[data-e2e="like-icon"], [data-e2e="like-button"]'
+                )
                 if not like:
                     return "no-btn"
                 aria = (like.get_attribute("aria-label") or "").lower()
                 if "unlike" in aria or "не нравится" in aria:
                     return "already"
-                like.click()
+                like.click(force=True)
                 time.sleep(1.5)
                 return "liked"
-            except Exception:
-                return "err"
+            except Exception as exc:
+                return "err:" + str(exc)[:20]
 
         # 1) лайки на видео ниши
-        for idx, vid in enumerate(video_ids):
-            url = f"https://www.tiktok.com/video/{vid}"
+        for idx, (handle, vid) in enumerate(video_targets):
+            url = f"https://www.tiktok.com/@{handle}/video/{vid}" if handle else f"https://www.tiktok.com/video/{vid}"
             try:
                 pg.goto(url, wait_until="domcontentloaded", timeout=45000)
             except Exception as exc:
                 detail.append({"id": vid, "like": "goto-err", "why": str(exc)[:40]})
                 continue
-            pg.wait_for_timeout(3500)
+            pg.wait_for_timeout(4500)
             st = click_like()
             if st == "liked":
                 liked += 1
@@ -157,7 +158,7 @@ def main() -> int:
         b.close()
 
     print(f"WARM_RESULT likes={liked} already={already} follow={followed} failed={failed}")
-    print(json.dumps(detail[:20], ensure_ascii=False))
+    print(json.dumps(detail[:12], ensure_ascii=False))
     return 0
 
 
