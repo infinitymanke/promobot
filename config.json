@@ -32,7 +32,7 @@
       "creator_sec_uids": []
     },
     "max_age_days": 60,
-    "creators_max_authors": 6,
+    "creators_max_authors": 10,
     "schedule": {
       "enabled": true,
       "start_hour": 0,

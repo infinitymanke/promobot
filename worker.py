@@ -190,10 +190,14 @@ class Worker:
             except TikTokError as exc:
                 logger.warning("автор %s: %s", sec[-8:], exc)
                 continue
+            had_fresh = False
             for post in posts:
                 age = self._age_days(post)
                 if age is not None and age <= max_age:
                     candidates.append((post, sec))
+                    had_fresh = True
+            if had_fresh:
+                self._learn_author(sec)
         logger.info("поиск «%s»: авторов %d, свежих видео %d", query, len(authors), len(candidates))
         return candidates
 
@@ -210,7 +214,7 @@ class Worker:
         items = []
         for uid in uids[: self.cfg.get("creators_max_authors", 6)]:
             try:
-                posts = self.client.get_own_videos(uid, count=6)
+                posts = self.client.get_own_videos(uid, count=10)
             except TikTokError as exc:
                 logger.warning("автор %s: %s", uid[-8:], exc)
                 continue
