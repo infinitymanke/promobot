@@ -77,10 +77,15 @@ def main() -> int:
         return 1
 
     batches = {}
+    api_keys = {}
+    dom_links = {}
 
     def on_response(resp):
         u = resp.url
         try:
+            if "tiktok.com/api/" in u:
+                api_keys.setdefault(u.split("/api/")[-1][:50], 0)
+                api_keys[u.split("/api/")[-1][:50]] += 1
             if "tiktok.com/api/" in u and resp.status == 200:
                 ct = resp.headers.get("content-type", "")
                 if "json" not in ct.lower():
@@ -120,6 +125,14 @@ def main() -> int:
             except Exception as exc:
                 print("goto", url, "EXC:", type(exc).__name__, str(exc)[:80])
             pg.wait_for_timeout(7000)
+            try:
+                hrefs = pg.eval_on_selector_all(
+                    'a[href*="/video/"]',
+                    "els => els.map(e => e.getAttribute('href')).slice(0,30)",
+                )
+                dom_links[url] = [h for h in hrefs if h] 
+            except Exception as exc:
+                dom_links[url] = "EXC:" + str(exc)[:50]
             for _ in range(3):
                 try:
                     pg.mouse.wheel(0, 5000)
@@ -128,6 +141,9 @@ def main() -> int:
                 pg.wait_for_timeout(1500)
         ctx.close()
         b.close()
+
+    print("API_KEYS=" + json.dumps(api_keys, ensure_ascii=False))
+    print("DOM_LINKS=" + json.dumps(dom_links, ensure_ascii=False))
 
     if not batches:
         print("!! перехвачено API с видео: 0 (возможно блок/капча)")
