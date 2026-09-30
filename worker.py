@@ -148,10 +148,19 @@ class Worker:
         max_age = self.cfg.get("max_age_days", 60)
 
         items = []
-        try:
-            items = self.client.search_videos(query, count=count, sort_type="0")
-        except TikTokError as exc:
-            logger.warning("поиск «%s»: %s", query, exc)
+        for sort_type in ("0", "1", "2"):
+            try:
+                items = self.client.search_videos(query, count=count, sort_type=sort_type)
+                fresh_direct = sum(
+                    1 for it in items
+                    if self._age_days(it) is not None and self._age_days(it) <= max_age
+                )
+                if fresh_direct:
+                    break
+            except TikTokError as exc:
+                logger.warning("поиск «%s» (%s): %s", query, sort_type, exc)
+            if items:
+                break
 
         authors = []
         try:
