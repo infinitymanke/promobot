@@ -36,7 +36,7 @@ jobs:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           TIKTOK_COOKIES_B64: ${{ secrets.TIKTOK_COOKIES_B64 }}
-        run: python harvest.py
+        run: xvfb-run --auto-servernum python harvest.py
 
       - name: Commit state (dedup history, trusted pool)
         run: |
