@@ -1,0 +1,27 @@
+name: warmup
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  warm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install deps
+        run: |
+          pip install -r requirements.txt
+          python -m playwright install --with-deps chromium
+      - name: Warm-up
+        env:
+          TIKTOK_COOKIES_B64: ${{ secrets.TIKTOK_COOKIES_B64 }}
+        run: |
+          xvfb-run --auto-servernum python warmup.py
