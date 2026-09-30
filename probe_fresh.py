@@ -96,7 +96,9 @@ def main() -> int:
     pages = [
         "https://www.tiktok.com/",
         "https://www.tiktok.com/tag/" + urllib.parse.quote("майнкрафт"),
+        "https://www.tiktok.com/search?q=" + urllib.parse.quote("майнкрафт"),
         "https://www.tiktok.com/tag/" + urllib.parse.quote("майнкрафтсервер"),
+        "https://www.tiktok.com/search?q=" + urllib.parse.quote("майнкрафт сервер"),
     ]
     with sync_playwright() as p:
         b = p.chromium.launch(
