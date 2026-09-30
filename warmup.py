@@ -24,17 +24,26 @@ MAX_LIKES = 18
 MAX_FOLLOWS = 5
 
 
-def get_cookies() -> list:
+def get_cookies() -> dict:
+    """Возвращает storage_state: {"cookies": [...]} (из секрета или файла)."""
     b64 = os.environ.get("TIKTOK_COOKIES_B64", "")
     if b64:
         try:
-            return json.loads(base64.b64decode(b64))["cookies"]
+            return json.loads(base64.b64decode(b64))
         except Exception as exc:
             print("!! bad TIKTOK_COOKIES_B64:", exc)
     p = Path("sessions/acc1.json")
     if p.exists():
-        return json.loads(p.read_text(encoding="utf-8"))["cookies"]
-    return []
+        return json.loads(p.read_text(encoding="utf-8"))
+    return {"cookies": []}
+
+
+def get_cookie_file() -> Path:
+    state = get_cookies()
+    state_path = Path("sessions/_env.json")
+    state_path.parent.mkdir(exist_ok=True)
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    return state_path
 
 
 def collect_targets() -> tuple:
@@ -44,7 +53,7 @@ def collect_targets() -> tuple:
     try:
         from tiktok import TikTokClient
         c = TikTokClient(region="RU", language="ru", impersonate="chrome131")
-        c.load_cookies("sessions/acc1.json")
+        c.load_cookies(str(get_cookie_file()))
         for q in VIDEO_QUERIES:
             try:
                 for it in c.search_videos(q, count=8)[:8]:
@@ -69,7 +78,7 @@ def collect_targets() -> tuple:
 
 def main() -> int:
     cookies = get_cookies()
-    if not cookies:
+    if not cookies.get("cookies"):
         print("!! нет кук")
         return 1
     video_ids, follow_handles = collect_targets()
@@ -89,7 +98,7 @@ def main() -> int:
             locale="ru-RU",
             timezone_id="Europe/Moscow",
         )
-        ctx.add_cookies(cookies)
+        ctx.add_cookies(cookies.get("cookies", []))
         pg = ctx.new_page()
 
         def click_like():
