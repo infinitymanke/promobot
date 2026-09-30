@@ -91,6 +91,21 @@ def main() -> int:
                 if "json" not in ct.lower():
                     return
                 j = resp.json()
+                if "search/general/full" in u:
+                    s = {}
+                    for k, v in (j.items() if isinstance(j, dict) else []):
+                        if isinstance(v, list):
+                            s[k] = "list:" + str(len(v))
+                        elif isinstance(v, dict):
+                            s[k] = "dict:" + ",".join(list(v)[:8])
+                        else:
+                            s[k] = type(v).__name__
+                    print("SEARCH_FULL_SHAPE=" + json.dumps(s, ensure_ascii=False))
+                    if isinstance(j.get("data"), list) and j["data"]:
+                        d0 = j["data"][0]
+                        if isinstance(d0, dict):
+                            print("SEARCH_FULL_ITEM0=" + json.dumps(
+                                {k: (type(v).__name__) for k, v in d0.items()}, ensure_ascii=False))
                 items = j.get("itemList") or j.get("item_list") or []
                 if items and isinstance(items[0], dict):
                     key = u.split("/api/")[-1][:60]
