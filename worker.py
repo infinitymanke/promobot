@@ -71,9 +71,17 @@ class Worker:
     # ---------------------------------------------------------------- тексты комментариев
     def comment_texts(self) -> List[str]:
         """
-        Весь файл comment.txt — это ОДИН комментарий (многострочный).
-        Если файла нет — возвращает пустой список.
+        Пулы вариантов: comments_pool.txt — по одной вариации на строку.
+        Если пула нет — падаем на comment.txt (один комментарий).
         """
+        pool_path = self.cfg.get("comment_pool_file", "comments_pool.txt")
+        try:
+            lines = Path(pool_path).read_text(encoding="utf-8").splitlines()
+            texts = [ln.strip() for ln in lines if ln.strip() and not ln.startswith("#")]
+            if texts:
+                return texts
+        except FileNotFoundError:
+            pass
         path = self.cfg.get("comment_file", "comment.txt")
         try:
             text = Path(path).read_text(encoding="utf-8").strip()

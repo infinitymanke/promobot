@@ -162,6 +162,11 @@ def main() -> int:
     dmin = cfg.get("delay_min_s", 20)
     dmax = cfg.get("delay_max_s", 60)
 
+    brake_fails = cfg.get("brake_fails", 3)
+    brake_cap = cfg.get("brake_cap", 6)
+    brake = worker.state.setdefault("brake", {"fails": 0, "until": ""})
+    capped = bool(brake.get("until")) and brake["until"] >= datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+
     candidates = []
     with sync_playwright() as p:
         b = p.chromium.launch(
@@ -186,8 +191,10 @@ def main() -> int:
 
     texts = worker.comment_texts()
     posted = failed = 0
+    limit = (brake_cap if capped else max_comments)
+    consec = 0
     for item in candidates:
-        if posted >= max_comments:
+        if posted >= limit:
             break
         aid = client.aweme_id(item)
         if not aid or worker._is_commented(aid):
@@ -202,24 +209,44 @@ def main() -> int:
             if sec:
                 worker._learn_author(sec)
             posted += 1
+            consec = 0
             logger.info("[жнец] %s: комментарий ок", aid)
         except Exception as exc:
+            consec += 1
             failed += 1
+            brake["fails"] = consec
             logger.warning("[жнец] %s: %s", aid, str(exc)[:120])
+            if consec >= brake_fails:
+                brake["until"] = (datetime.datetime.now() + datetime.timedelta(hours=12)).strftime("%Y-%m-%d %H:%M")
+                capped = True
+                limit = brake_cap
+                logger.warning("!! авто-тормоз: %d провалов подряд — лимит срезан до %d на 12ч", consec, brake_cap)
+                break
         time.sleep(random.uniform(dmin, dmax))
+
+    if failed == 0 and brake.get("fails"):
+        brake["fails"] = 0
+        brake["until"] = ""
+        logger.info("цикл чистый — тормоз снят")
 
     stats = {
         "posted": posted,
         "failed": failed,
         "search_scanned": len(candidates),
+        "bounded": limit < max_comments,
     }
     worker._save_state()
 
     print("статистика:", json.dumps(stats, ensure_ascii=False))
+    today = datetime.datetime.now().strftime("%Y-%m-%d")
+    daily = worker.state.get("days", {}).get(today, 0)
     line = (
-        f"✅ PromoBot: прокомментировано {posted}, ошибок {failed}\n"
-        f"Собрано майнкрафт-видео: {len(candidates)}"
+        f"? PromoBot: прокомментировано {posted}, ошибок {failed}\n"
+        f"найдено майнкрафт-видео: {len(candidates)}\n"
+        f"за сегодня: {daily}"
     )
+    if limit < max_comments:
+        line += " [тормоз активен]"
     print(line)
 
     if TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
