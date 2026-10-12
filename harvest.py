@@ -35,6 +35,16 @@ BROWSER_QUERIES = [
 ]
 MICRO_KEYS = ("майнкрафт", "майншилд", "ищусервер", "minecraft", "mcpe")
 
+TAG_QUERIES = [
+    "майнкрафт",
+    "майнкрафтсервер",
+    "майншилд",
+    "сервермайн",
+    "майнкрафтвыживание",
+    "серверамайнкрафт",
+    "ищусервер",
+]
+
 BASE_DIR = Path(__file__).resolve().parent
 COOKIES_FILE = BASE_DIR / "sessions" / "acc1.json"
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
@@ -131,6 +141,30 @@ def collect_browser_candidates(pg, queries: list, max_age_days: int):
     return list(found.values())
 
 
+def collect_tag_candidates(pg, tags: list) -> dict:
+    """Анонимный сбор: открывает тэг-страницы, вытаскивает из DOM ссылки
+    /@author/video/<id>. Возвращает {aweme_id: author_handle}."""
+    found = {}
+    for tag in tags:
+        url = "https://www.tiktok.com/tag/" + urllib.parse.quote_plus(tag)
+        try:
+            pg.goto(url, wait_until="domcontentloaded", timeout=45000)
+        except Exception as exc:
+            logger.warning("tag %s: %s", tag, str(exc)[:60])
+            continue
+        pg.wait_for_timeout(4000)
+        for _ in range(3):
+            try:
+                pg.mouse.wheel(0, 6000)
+            except Exception:
+                pass
+            pg.wait_for_timeout(1500)
+        for m in re.finditer(r'href="/@([^/"]+)/video/(\d{8,})', pg.content()):
+            found.setdefault(m.group(2), m.group(1))
+        logger.info("tag <%s>: всего уникальных %d", tag, len(found))
+    return found
+
+
 def main() -> int:
     cfg = load_config().get("worker", {})
     cookies = get_cookies()
@@ -167,7 +201,9 @@ def main() -> int:
     brake = worker.state.setdefault("brake", {"fails": 0, "until": ""})
     capped = bool(brake.get("until")) and brake["until"] >= datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
 
-    candidates = []
+    tags = cfg.get("tag_queries", TAG_QUERIES)
+
+    author_map = {}
     with sync_playwright() as p:
         b = p.chromium.launch(
             headless=False,
@@ -179,35 +215,28 @@ def main() -> int:
             locale="ru-RU",
             timezone_id="Europe/Moscow",
         )
-        ctx.add_cookies(cookies)
         pg = ctx.new_page()
-        candidates = collect_browser_candidates(pg, BROWSER_QUERIES, max_age)
+        author_map = collect_tag_candidates(pg, tags)
         ctx.close()
         b.close()
         p.stop()
 
-    candidates.sort(key=lambda it: (age_days(it) or 1e9))
-    logger.info("жнец: собрано свежих майнкрафт-видео: %d", len(candidates))
+    candidate_ids = [aid for aid in author_map if not worker._is_commented(aid)]
+    logger.info("жнец: собрано видео с тэг-страниц: %d, новых: %d", len(author_map), len(candidate_ids))
 
     texts = worker.comment_texts()
     posted = failed = 0
     limit = (brake_cap if capped else max_comments)
     consec = 0
-    for item in candidates:
+    for aid in candidate_ids:
         if posted >= limit:
             break
-        aid = client.aweme_id(item)
-        if not aid or worker._is_commented(aid):
-            continue
         if not texts:
             break
         text = random.choice(texts)
         try:
             client.publish_comment(aid, text)
             worker._mark_commented(aid)
-            sec = client.author_uid(item)
-            if sec:
-                worker._learn_author(sec)
             posted += 1
             consec = 0
             logger.info("[жнец] %s: комментарий ок", aid)
@@ -232,7 +261,7 @@ def main() -> int:
     stats = {
         "posted": posted,
         "failed": failed,
-        "search_scanned": len(candidates),
+        "discovered": len(candidate_ids),
         "bounded": limit < max_comments,
     }
     worker._save_state()
@@ -242,7 +271,7 @@ def main() -> int:
     daily = worker.state.get("days", {}).get(today, 0)
     line = (
         f"? PromoBot: прокомментировано {posted}, ошибок {failed}\n"
-        f"найдено майнкрафт-видео: {len(candidates)}\n"
+        f"найдено видео на тэгах: {len(candidate_ids)}\n"
         f"за сегодня: {daily}"
     )
     if limit < max_comments:
