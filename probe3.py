@@ -94,6 +94,18 @@ def main() -> int:
                     pass
                 pg.wait_for_timeout(1500)
                 print(f"ANON tag {tag}): dom_links={dom(pg)}")
+                if tag == "майнкрафтсервер":
+                    html = pg.content()
+                    import re
+                    ct = re.findall(r'"createTime":\s*"?(\d{8,})', html)
+                    aw = re.findall(r'"aweme_id":\s*"?(\d{8,})', html)
+                    vi = re.findall(r'/video/(\d{8,})', html)
+                    de = re.findall(r'"desc":\s*"(.{0,24})', html)
+                    import datetime as _dt
+                    samp = [(int(t), _dt.datetime.fromtimestamp(int(t) / 1000 if int(t) > 1e12 else int(t)).strftime("%Y-%m-%d")) for t in ct[:5]]
+                    print(f"  -> createTime count={len(ct)} sample={samp}")
+                    print(f"  -> aweme_id count={len(aw)} /video ids count={len(vi)} desc sample={de[:2]}")
+                    print(f"  -> rehydration script present: {'__UNIVERSAL_DATA' in html}")
             except Exception as exc:
                 print(f"ANON tag {tag}: err {str(exc)[:60]}")
 
