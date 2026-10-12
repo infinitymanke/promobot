@@ -202,9 +202,11 @@ def main() -> int:
     brake = worker.state.setdefault("brake", {"fails": 0, "until": ""})
     capped = bool(brake.get("until")) and brake["until"] >= datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
 
+    queries = cfg.get("browser_queries", BROWSER_QUERIES)
     tags = cfg.get("tag_queries", TAG_QUERIES)
 
-    author_map = {}
+    search_items = []
+    tag_map = {}
     with sync_playwright() as p:
         b = p.chromium.launch(
             headless=False,
@@ -216,14 +218,35 @@ def main() -> int:
             locale="ru-RU",
             timezone_id="Europe/Moscow",
         )
+        ctx.add_cookies(cookies)
         pg = ctx.new_page()
-        author_map = collect_tag_candidates(pg, tags)
+        search_items = collect_browser_candidates(pg, queries, max_age)
         ctx.close()
+
+        ctx2 = b.new_context(
+            user_agent=UA,
+            viewport={"width": 1280, "height": 800},
+            locale="ru-RU",
+            timezone_id="Europe/Moscow",
+        )
+        pg2 = ctx2.new_page()
+        tag_map = collect_tag_candidates(pg2, tags)
+        ctx2.close()
         b.close()
         p.stop()
 
-    candidate_ids = [aid for aid in author_map if not worker._is_commented(aid)]
-    logger.info("жнец: собрано видео с тэг-страниц: %d, новых: %d", len(author_map), len(candidate_ids))
+    seen = set()
+    candidate_ids = []
+    for it in search_items:
+        aid = str(it.get("aweme_id") or it.get("id"))
+        if aid and aid not in seen and not worker._is_commented(aid):
+            seen.add(aid)
+            candidate_ids.append(aid)
+    extra = [aid for aid in tag_map if aid not in seen and not worker._is_commented(aid)]
+    candidate_ids.extend(extra)
+    extra_count = len(extra)
+    logger.info("жнец: поиск новых: %d, тэги новых: %d, всего к постингу: %d",
+                len(candidate_ids) - extra_count, extra_count, len(candidate_ids))
 
     texts = worker.comment_texts()
     posted = failed = 0
@@ -262,6 +285,8 @@ def main() -> int:
     stats = {
         "posted": posted,
         "failed": failed,
+        "search_new": len(candidate_ids) - extra_count,
+        "tag_new": extra_count,
         "discovered": len(candidate_ids),
         "bounded": limit < max_comments,
     }
@@ -272,11 +297,11 @@ def main() -> int:
     daily = worker.state.get("days", {}).get(today, 0)
     line = (
         f"? PromoBot: прокомментировано {posted}, ошибок {failed}\n"
-        f"найдено видео на тэгах: {len(candidate_ids)}\n"
+        f"найдено видео: {len(candidate_ids)} (поиск {len(candidate_ids) - extra_count}, тэги {extra_count})\n"
         f"за сегодня: {daily}"
     )
     if not candidate_ids:
-        line += "\nисточник пуст (когорта IP) — повезёт в след. час"
+        line += "\nисточник пуст (сессия/когорта) — повезёт в след. час"
     if limit < max_comments:
         line += " [тормоз активен]"
     print(line)
