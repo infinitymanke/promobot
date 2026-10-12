@@ -275,6 +275,8 @@ def main() -> int:
         f"найдено видео на тэгах: {len(candidate_ids)}\n"
         f"за сегодня: {daily}"
     )
+    if not candidate_ids:
+        line += "\nисточник пуст (когорта IP) — повезёт в след. час"
     if limit < max_comments:
         line += " [тормоз активен]"
     print(line)
