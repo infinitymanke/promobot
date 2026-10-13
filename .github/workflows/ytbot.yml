@@ -1,0 +1,44 @@
+name: ytbot
+
+on:
+  schedule:
+    - cron: '0 */2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  comment:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install deps
+        run: pip install requests
+
+      - name: Run one cycle
+        working-directory: ytbot
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          YT_CREDENTIALS_B64: ${{ secrets.YT_CREDENTIALS_B64 }}
+        run: python harvest.py
+
+      - name: Commit state
+        run: |
+          git add -f ytbot/state.json
+          if ! git diff --cached --quiet; then
+            git config user.name "ytbot"
+            git config user.email "ytbot@users.noreply.github.com"
+            git commit -m "ytbot: state update"
+            git push
+          else
+            echo "state не изменился — пуш не нужен"
+          fi

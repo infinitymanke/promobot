@@ -1,6 +1,8 @@
 __pycache__/
 *.pyc
 sessions/
+client_secret.json
+*.token.json
 cookies_b64.txt
 logs/
 api.txt

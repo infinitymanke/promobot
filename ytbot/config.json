@@ -1,0 +1,33 @@
+{
+  "worker": {
+    "mode": "shorts_search",
+    "search_queries": [
+      "майнкрафт шортс",
+      "minecraft shorts",
+      "майнкрафт выживание",
+      "minecraft 100 days",
+      "майнкрафт мем",
+      "майнкрафт сборка",
+      "minecraft build hacks",
+      "майнкрафт хардкор"
+    ],
+    "queries_per_run": 2,
+    "search_count": 20,
+    "max_comments_per_run": 10,
+    "day_cap": 60,
+    "quota_ceiling": 8000,
+    "max_age_days": 45,
+    "comment_file": "comment.txt",
+    "comment_pool_file": "comments_pool.txt",
+    "delay_min_s": 15,
+    "delay_max_s": 45,
+    "brake_fails": 3,
+    "brake_cap": 6,
+    "region": "RU",
+    "language": "ru"
+  },
+  "telegram": {
+    "stats_interval_s": 3600,
+    "critical_threshold": 5
+  }
+}
