@@ -252,10 +252,15 @@ def main() -> int:
     posted = failed = 0
     limit = (brake_cap if capped else max_comments)
     consec = 0
+    day_cap = cfg.get("day_cap", 400)
+    today = datetime.datetime.now().strftime("%Y-%m-%d")
     for aid in candidate_ids:
         if posted >= limit:
             break
         if not texts:
+            break
+        if worker.state.get("days", {}).get(today, 0) >= day_cap:
+            logger.info("дневной потолок %d достигнут — стоп", day_cap)
             break
         text = random.choice(texts)
         try:
@@ -282,6 +287,15 @@ def main() -> int:
         brake["until"] = ""
         logger.info("цикл чистый — тормоз снят")
 
+    dry = worker.state.setdefault("dry", {"day": "", "streak": 0})
+    if posted or failed or candidate_ids:
+        dry["day"] = today
+        dry["streak"] = 0
+    elif dry.get("day") != today:
+        dry["streak"] = dry.get("streak", 0) + 1
+        dry["day"] = today
+    worker._save_state()
+
     stats = {
         "posted": posted,
         "failed": failed,
@@ -289,17 +303,18 @@ def main() -> int:
         "tag_new": extra_count,
         "discovered": len(candidate_ids),
         "bounded": limit < max_comments,
+        "dry_days": dry.get("streak", 0),
     }
-    worker._save_state()
 
     print("статистика:", json.dumps(stats, ensure_ascii=False))
-    today = datetime.datetime.now().strftime("%Y-%m-%d")
     daily = worker.state.get("days", {}).get(today, 0)
     line = (
         f"? PromoBot: прокомментировано {posted}, ошибок {failed}\n"
         f"найдено видео: {len(candidate_ids)} (поиск {len(candidate_ids) - extra_count}, тэги {extra_count})\n"
         f"за сегодня: {daily}"
     )
+    if dry.get("streak", 0) >= 3:
+        line += f"\n[!] 3 дня подряд нет новых видео — проверь куки/сессию"
     if not candidate_ids:
         line += "\nисточник пуст (сессия/когорта) — повезёт в след. час"
     if limit < max_comments:
