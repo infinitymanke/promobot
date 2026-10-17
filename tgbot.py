@@ -146,6 +146,7 @@ def main() -> int:
     bot.set_commands()
 
     offset = int(_read_json(OFFSET, {}).get("offset", 0) or 0)
+    debug = {"offset_in": offset, "chat_id": bot.chat_id}
     try:
         r = bot._session.get(
             f"https://api.telegram.org/bot{TOKEN}/getUpdates",
@@ -154,18 +155,25 @@ def main() -> int:
         data = r.json()
     except Exception as exc:
         print("!! getUpdates:", exc)
-        return 0
+        _write_json(BASE_DIR / "tg_debug.json", {"error": str(exc)})
+        return 1
     if not data.get("ok"):
         print("!! getUpdates:", data.get("description"))
-        return 0
+        _write_json(BASE_DIR / "tg_debug.json", {"error": data.get("description")})
+        return 1
 
+    results = data.get("result", [])
+    debug["ok"] = True
+    debug["updates"] = []
     max_offset = offset
     answered = 0
-    for upd in data.get("result", []):
+    for upd in results:
         uid = int(upd.get("update_id", 0))
         max_offset = max(max_offset, uid)
         msg = upd.get("message") or {}
         chat = msg.get("chat") or {}
+        text = (msg.get("text") or "")[:60]
+        debug["updates"].append({"id": uid, "chat": chat.get("id"), "text": text})
         if str(chat.get("id")) != str(bot.chat_id):
             continue
         parts = (msg.get("text") or "").strip().split()
@@ -180,6 +188,11 @@ def main() -> int:
     if max_offset != offset:
         _write_json(OFFSET, {"offset": max_offset})
         commit_push([OFFSET], "alfredo: offset")
+    debug["answered"] = answered
+    debug["offset_out"] = max_offset
+    if results or answered:
+        _write_json(BASE_DIR / "tg_debug.json", debug)
+        commit_push([BASE_DIR / "tg_debug.json"], "alfredo: debug")
     print(f"обработано команд: {answered}, offset={max_offset}")
     return 0
 
