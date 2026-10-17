@@ -45,7 +45,11 @@ jobs:
             git config user.name "promobot"
             git config user.email "promobot@users.noreply.github.com"
             git commit -m "promobot: state update"
-            git push
+            for i in 1 2 3 4 5; do
+              git pull --rebase --autostash origin main && git push && break
+              echo "push не прошёл, попытка $i"
+              sleep 5
+            done
           else
             echo "state не изменился — пуш не нужен"
           fi
