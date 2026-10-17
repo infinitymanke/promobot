@@ -1,0 +1,19 @@
+{
+  "offset_in": 0,
+  "chat_id": "5334715079",
+  "ok": true,
+  "updates": [
+    {
+      "id": 250361664,
+      "chat": 5334715079,
+      "text": "/stats"
+    },
+    {
+      "id": 250361665,
+      "chat": 5334715079,
+      "text": "/start"
+    }
+  ],
+  "answered": 2,
+  "offset_out": 250361665
+}
