@@ -78,7 +78,7 @@ def main() -> int:
         "response_type": "code",
         "scope": " ".join(SCOPES),
         "access_type": "offline",
-        "prompt": "consent",
+        "prompt": "select_account consent",
     })
 
     print("=" * 70)
