@@ -193,6 +193,20 @@ class YTClient:
         self._charge(COST_COMMENT)
         return (data.get("snippet") or {}).get("topLevelComment", {}).get("id", "")
 
+    def comment_visible(self, video_id: str, comment_id: str) -> bool:
+        """Виден ли наш комментарий публично (не ушёл ли на модерацию)."""
+        try:
+            data = self._get("/commentThreads", {
+                "part": "snippet", "videoId": video_id,
+                "maxResults": 100, "order": "time", "textFormat": "plainText",
+            })
+        except Exception:
+            return True
+        for it in data.get("items", []):
+            if (it.get("snippet") or {}).get("topLevelComment", {}).get("id") == comment_id:
+                return True
+        return False
+
     def close(self):
         try:
             requests.session()

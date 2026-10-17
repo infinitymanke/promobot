@@ -146,6 +146,7 @@ def main() -> int:
 
     texts = worker.comment_texts()
     posted = failed = consec = 0
+    posted_pairs = []
     for c in candidates:
         if posted >= max_comments or not texts:
             break
@@ -154,9 +155,10 @@ def main() -> int:
             break
         aid = c["id"]
         try:
-            client.post_comment(aid, random.choice(texts))
+            cid = client.post_comment(aid, random.choice(texts))
             worker.mark_commented(aid)
             posted += 1
+            posted_pairs.append((aid, cid))
             consec = 0
             logger.info("[жнец] %s (views=%s): комментарий ок", aid, c.get("views"))
         except Exception as exc:
@@ -167,6 +169,14 @@ def main() -> int:
                 logger.warning("!! авто-тормоз: %d провалов подряд — стоп до следующего цикла", consec)
                 break
         time.sleep(random.uniform(dmin, dmax))
+
+    held = 0
+    if posted_pairs:
+        for vid, cid in posted_pairs[:2]:
+            if not client.comment_visible(vid, cid):
+                held += 1
+        if held:
+            logger.warning("!! %d из %d проверенных комментариев ушли на модерацию YouTube", held, min(2, len(posted_pairs)))
 
     today = datetime.datetime.now().strftime("%Y-%m-%d")
     dry = worker.state.setdefault("dry", {"day": "", "streak": 0})
@@ -183,6 +193,8 @@ def main() -> int:
     )
     if not candidates:
         line += "\nисточник пуст — повезёт в след. час"
+    if held:
+        line += f"\n[!] {held} коммент(а) ушли на модерацию YouTube — возможен флаг текста/канала"
     if dry.get("streak", 0) >= 3:
         line += "\n[!] 3 дня подряд нет новых видео — проверь токен/канал"
     print("статистика:", json.dumps(
