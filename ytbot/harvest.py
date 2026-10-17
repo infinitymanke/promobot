@@ -88,6 +88,13 @@ def _notify(text: str) -> None:
 
 def main() -> int:
     cfg = json.loads((BASE_DIR / "config.json").read_text(encoding="utf-8")).get("worker", {})
+    try:
+        ctrl = json.loads((BASE_DIR.parent / "control.json").read_text(encoding="utf-8"))
+        if ctrl.get("paused"):
+            print("🗿 пауза (Альфредо закрыл музей) — цикл пропущен")
+            return 0
+    except Exception:
+        pass
     creds = load_creds()
     if not creds.get("client_id") or not creds.get("refresh_token"):
         print("!! нет кред (YT_CREDENTIALS_B64 или sessions/token.json). Сначала login_capture.py")
@@ -134,7 +141,7 @@ def main() -> int:
                 auth_failed = True
             logger.warning("поиск «%s»: %s", q, msg[:120])
     if auth_failed and not found:
-        line = ("YTBot: ТОКЕН YouTube недействителен (истёк или отозван).\n"
+        line = ("🗿 Альфредо: ключ YouTube недействителен (истёк или отозван).\n"
                 "Перезайди: python ytbot\\login_capture.py, затем python ytbot\\push_secret.py")
         print(line)
         _notify(line)
@@ -214,7 +221,7 @@ def main() -> int:
     worker.save()
 
     line = (
-        f"YTBot: прокомментировано {posted}, ошибок {failed}\n"
+        f"🗿 YouTube: украшено {posted}, сбоев {failed}\n"
         f"найдено свежих: {len(candidates)}, за сегодня: {worker.daily_count()}"
     )
     if not candidates:

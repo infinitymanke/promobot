@@ -168,6 +168,13 @@ def collect_tag_candidates(pg, tags: list) -> dict:
 
 def main() -> int:
     cfg = load_config().get("worker", {})
+    try:
+        ctrl = json.loads((BASE_DIR / "control.json").read_text(encoding="utf-8"))
+        if ctrl.get("paused"):
+            print("🗿 пауза (Альфредо закрыл музей) — цикл пропущен")
+            return 0
+    except Exception:
+        pass
     cookies = get_cookies()
     if not cookies:
         print("!! нет кук (TIKTOK_COOKIES_B64 или sessions/acc1.json)")
@@ -309,7 +316,7 @@ def main() -> int:
     print("статистика:", json.dumps(stats, ensure_ascii=False))
     daily = worker.state.get("days", {}).get(today, 0)
     line = (
-        f"? PromoBot: прокомментировано {posted}, ошибок {failed}\n"
+        f"🗿 TikTok: украшено {posted}, сбоев {failed}\n"
         f"найдено видео: {len(candidate_ids)} (поиск {len(candidate_ids) - extra_count}, тэги {extra_count})\n"
         f"за сегодня: {daily}"
     )
