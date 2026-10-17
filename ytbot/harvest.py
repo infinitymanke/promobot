@@ -32,7 +32,7 @@ BASE_DIR = Path(__file__).resolve().parent
 TOKEN_FILE = BASE_DIR / "sessions" / "token.json"
 
 sys.path.insert(0, str(BASE_DIR))
-from youtube import YTClient  # noqa: E402
+from youtube import YTClient, YTQuotaError  # noqa: E402
 from worker import Worker  # noqa: E402
 
 
@@ -72,6 +72,20 @@ def normalize_creds(data: dict) -> dict:
     }
 
 
+def _notify(text: str) -> None:
+    tok = os.environ.get("TELEGRAM_TOKEN", "")
+    chat = os.environ.get("TELEGRAM_CHAT_ID", "")
+    if not (tok and chat):
+        return
+    try:
+        sys.path.insert(0, str(BASE_DIR.parent))
+        from telegram import TelegramBot
+
+        TelegramBot(tok, chat).send_message(text)
+    except Exception as exc:
+        logger.warning("telegram: %s", exc)
+
+
 def main() -> int:
     cfg = json.loads((BASE_DIR / "config.json").read_text(encoding="utf-8")).get("worker", {})
     creds = load_creds()
@@ -107,12 +121,24 @@ def main() -> int:
     else:
         queries = []
     found = {}
+    auth_failed = False
     for q in queries:
         try:
             for it in client.search_shorts(q, max_results=per_query):
                 found.setdefault(it["id"], it)
+        except YTQuotaError as exc:
+            logger.warning("поиск «%s»: квота — %s", q, str(exc)[:120])
         except Exception as exc:
-            logger.warning("поиск «%s»: %s", q, str(exc)[:120])
+            msg = str(exc)
+            if "refresh_token" in msg or "invalid_grant" in msg or "invalid_client" in msg:
+                auth_failed = True
+            logger.warning("поиск «%s»: %s", q, msg[:120])
+    if auth_failed and not found:
+        line = ("YTBot: ТОКЕН YouTube недействителен (истёк или отозван).\n"
+                "Перезайди: python ytbot\\login_capture.py, затем python ytbot\\push_secret.py")
+        print(line)
+        _notify(line)
+        return 1
     logger.info("поиск: собрано уникальных видео: %d", len(found))
 
     candidates = [v for v in found.values() if not worker.is_commented(v["id"])]
@@ -202,17 +228,7 @@ def main() -> int:
         ensure_ascii=False,
     ))
     print(line)
-
-    tok = os.environ.get("TELEGRAM_TOKEN", "")
-    chat = os.environ.get("TELEGRAM_CHAT_ID", "")
-    if tok and chat:
-        try:
-            sys.path.insert(0, str(BASE_DIR.parent))
-            from telegram import TelegramBot
-
-            TelegramBot(tok, chat).send_message(line)
-        except Exception as exc:
-            logger.warning("telegram: %s", exc)
+    _notify(line)
 
     return 0
 
