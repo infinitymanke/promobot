@@ -101,6 +101,7 @@ def is_minecraft(item: dict) -> bool:
 
 def collect_browser_candidates(pg, queries: list, max_age_days: int):
     found = {}
+    stats = {"raw": 0, "fresh": 0}
 
     def on_response(resp):
         u = resp.url
@@ -114,11 +115,14 @@ def collect_browser_candidates(pg, queries: list, max_age_days: int):
                     item = e.get("item")
                     if not isinstance(item, dict):
                         continue
+                    stats["raw"] += 1
                     aid = item.get("aweme_id") or item.get("id")
                     if not aid:
                         continue
-                    if age_days(item) is None or age_days(item) > max_age_days:
+                    age = age_days(item)
+                    if age is None or age > max_age_days:
                         continue
+                    stats["fresh"] += 1
                     if is_minecraft(item):
                         found[str(aid)] = item
         except Exception:
@@ -139,6 +143,8 @@ def collect_browser_candidates(pg, queries: list, max_age_days: int):
             except Exception:
                 pass
             pg.wait_for_timeout(1600)
+    logger.info("поиск: перехвачено API-ответов %d, свежих (<= %dд) %d, майн %d",
+                stats["raw"], max_age_days, stats["fresh"], len(found))
     return list(found.values())
 
 
@@ -160,10 +166,29 @@ def collect_tag_candidates(pg, tags: list) -> dict:
             except Exception:
                 pass
             pg.wait_for_timeout(1500)
-        for m in re.finditer(r'href="/@([^/"]+)/video/(\d{8,})', pg.content()):
+        content = pg.content()
+        if "Передвиньте ползунок" in content:
+            logger.info("тэг <%s>: КАПЧА-стена — тэг-страницы мертвы, прерываю", tag)
+            break
+        for m in re.finditer(r'href="/@([^/"]+)/video/(\d{8,})', content):
             found.setdefault(m.group(2), m.group(1))
         logger.info("tag <%s>: всего уникальных %d", tag, len(found))
     return found
+
+
+def session_alive(pg) -> bool:
+    """Быстрая проверка сессии: домашняя страница без кнопки «Войти»."""
+    try:
+        pg.goto("https://www.tiktok.com/", wait_until="domcontentloaded", timeout=45000)
+    except Exception as exc:
+        logger.warning("auth-check goto: %s", str(exc)[:60])
+        return True  # таймаут не убиваем харвест
+    pg.wait_for_timeout(4000)
+    try:
+        body = pg.inner_text("body")
+    except Exception:
+        return True
+    return "Войти" not in body
 
 
 def main() -> int:
@@ -199,6 +224,19 @@ def main() -> int:
     worker = Worker(client, cfg)
     from worker import logger as wlog  # noqa: F401  (держим общий логгер стиля)
 
+    def alert(line: str) -> None:
+        if TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
+            try:
+                TelegramBot(TELEGRAM_TOKEN, TELEGRAM_CHAT_ID).send_message(line)
+            except Exception as exc:
+                print("!! telegram alert:", exc)
+
+    today = datetime.datetime.now().strftime("%Y-%m-%d")
+    day_cap = cfg.get("day_cap", 400)
+    if worker.state.get("days", {}).get(today, 0) >= day_cap:
+        print(f"🗿 дневной лимит {day_cap} уже выбран — жнец сегодня не работает")
+        return 0
+
     max_comments = cfg.get("max_comments_per_run", 3)
     max_age = cfg.get("max_age_days", 60)
     dmin = cfg.get("delay_min_s", 20)
@@ -227,6 +265,13 @@ def main() -> int:
         )
         ctx.add_cookies(cookies)
         pg = ctx.new_page()
+        if not session_alive(pg):
+            print("!! TikTok-сессия мертва (куки есть, но аккаунт разлогинен сервером) — харвест пропущен")
+            alert(
+                "🗿 TikTok-сессия мертва: куки есть, но аккаунт разлогинен сервером.\n"
+                "Нужен новый вход: python login_capture.py → python push_tiktok_secret.py"
+            )
+            return 1
         search_items = collect_browser_candidates(pg, queries, max_age)
         ctx.close()
 
@@ -252,6 +297,9 @@ def main() -> int:
     extra = [aid for aid in tag_map if aid not in seen and not worker._is_commented(aid)]
     candidate_ids.extend(extra)
     extra_count = len(extra)
+    ages = [a for a in (age_days(it) for it in search_items) if a is not None]
+    if ages:
+        logger.info("жнец: возраст найденного — свежайшее %.1fд, старейшее %.1fд", min(ages), max(ages))
     logger.info("жнец: поиск новых: %d, тэги новых: %d, всего к постингу: %d",
                 len(candidate_ids) - extra_count, extra_count, len(candidate_ids))
 
