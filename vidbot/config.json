@@ -1,0 +1,15 @@
+{
+  "voice": "ru-RU-DmitryNeural",
+  "rate": "+10%",
+  "width": 1080,
+  "height": 1920,
+  "fps": 24,
+  "pad_s": 0.5,
+  "facts_per_video": 3,
+  "hook": "Эти факты о Minecraft знают немногие",
+  "out_dir": "out",
+  "category_id": "20",
+  "quota_ceiling": 8000,
+  "link": "t.me/fivasmp",
+  "hashtags": ["майнкрафт", "minecraft", "факты", "майнкрафтфакты", "шортс", "shorts"]
+}

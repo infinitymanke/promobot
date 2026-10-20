@@ -15,6 +15,7 @@ youtube.py — клиент YouTube Data API v3 по OAuth2 (refresh token).
 
 import logging
 import time
+from pathlib import Path
 
 import requests
 
@@ -27,6 +28,9 @@ API = "https://www.googleapis.com/youtube/v3"
 COST_SEARCH = 100
 COST_STATS = 1
 COST_COMMENT = 50
+COST_UPLOAD = 1600
+
+UPLOAD_URL = "https://www.googleapis.com/upload/youtube/v3/videos"
 
 
 class YTError(Exception):
@@ -179,6 +183,97 @@ class YTClient:
                     "title": sn.get("title", ""),
                 }
         return out
+
+    # ---------------------------------------------------------------- загрузка
+    def upload_video(
+        self,
+        path,
+        title: str,
+        description: str = "",
+        tags: list = None,
+        category_id: str = "20",
+        privacy: str = "public",
+    ) -> str:
+        """Загрузка файла на канал (resumable upload). Возвращает video_id."""
+        p = Path(path)
+        size = p.stat().st_size
+        token = self._access()
+        body = {
+            "snippet": {
+                "title": title[:100],
+                "description": description[:5000],
+                "tags": (tags or [])[:30],
+                "categoryId": category_id,
+                "defaultLanguage": self.lang,
+                "defaultAudioLanguage": self.lang,
+            },
+            "status": {
+                "privacyStatus": privacy,
+                "selfDeclaredMadeForKids": False,
+            },
+        }
+        head = {
+            "Authorization": "Bearer " + token,
+            "Content-Type": "application/json; charset=UTF-8",
+            "X-Upload-Content-Length": str(size),
+            "X-Upload-Content-Type": "video/mp4",
+        }
+        if self._quota_left() < COST_UPLOAD:
+            raise YTQuotaError(f"нет {COST_UPLOAD} единиц квоты на загрузку")
+        r = requests.post(
+            UPLOAD_URL + "?uploadType=resumable&part=snippet,status",
+            headers=head, json=body, timeout=60,
+        )
+        if r.status_code != 200:
+            self._handle(r)
+        location = r.headers.get("Location", "")
+        if not location:
+            raise YTError("upload: нет Location-заголовка")
+        chunk = 8 * 1024 * 1024
+        offset = 0
+        video_id = ""
+        with p.open("rb") as fh:
+            while offset < size:
+                data = fh.read(chunk)
+                if not data:
+                    break
+                end = offset + len(data) - 1
+                rr = requests.put(
+                    location,
+                    data=data,
+                    headers={
+                        "Content-Length": str(len(data)),
+                        "Content-Range": f"bytes {offset}-{end}/{size}",
+                    },
+                    timeout=600,
+                )
+                if rr.status_code in (200, 201):
+                    video_id = (rr.json() or {}).get("id", "")
+                    break
+                if rr.status_code != 308:
+                    self._handle(rr)
+                offset = end + 1
+        if not video_id:
+            raise YTError("upload: не получили video_id")
+        self._charge(COST_UPLOAD)
+        logger.info("загружено: %s -> %s", p.name, video_id)
+        return video_id
+
+    def my_channel(self) -> dict:
+        """Канал владельца токена: {id, title, subs}."""
+        data = self._get("/channels", {"part": "snippet,statistics", "mine": "true"})
+        self._charge(COST_STATS)
+        items = data.get("items") or []
+        if not items:
+            return {}
+        it = items[0]
+        st = it.get("statistics") or {}
+        sn = it.get("snippet") or {}
+        return {
+            "id": it.get("id", ""),
+            "title": sn.get("title", ""),
+            "subs": st.get("subscriberCount", "?"),
+        }
 
     # ---------------------------------------------------------------- коммент
     def post_comment(self, video_id: str, text: str) -> str:

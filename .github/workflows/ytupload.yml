@@ -1,0 +1,48 @@
+name: ytupload
+
+on:
+  schedule:
+    - cron: '20 10 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  make_upload:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install deps
+        run: pip install edge-tts pillow requests
+
+      - name: Generate video
+        run: python vidbot/make.py --count 1
+
+      - name: Upload to YouTube
+        env:
+          YT_CREDENTIALS_B64: ${{ secrets.YT_CREDENTIALS_B64 }}
+        run: python vidbot/upload.py --limit 1
+
+      - name: Commit state
+        run: |
+          git add -f vidbot/state.json vidbot/out/*.json
+          if ! git diff --cached --quiet; then
+            git config user.name "vidbot"
+            git config user.email "vidbot@users.noreply.github.com"
+            git commit -m "vidbot: state update"
+            for i in 1 2 3 4 5; do
+              git pull --rebase --autostash origin main && git push && break
+              echo "push не прошёл, попытка $i"
+              sleep 5
+            done
+          else
+            echo "state не изменился — пуш не нужен"
+          fi
