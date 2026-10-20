@@ -21,7 +21,10 @@ jobs:
           python-version: '3.12'
 
       - name: Install deps
-        run: pip install edge-tts pillow requests
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg
+          pip install edge-tts pillow requests
 
       - name: Generate video
         run: python vidbot/make.py --count 1
